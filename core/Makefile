@@ -321,8 +321,13 @@ endif
 
 $(intermediate_system_build_prop): PRIVATE_BUILD_DESC := $(build_desc)
 
-$(shell mkdir -p $(PRODUCT_OUT) && echo $(BUILD_FINGERPRINT) > $(PRODUCT_OUT)/build_fingerprint.txt)
-BUILD_FINGERPRINT_FROM_FILE := $$(cat $(PRODUCT_OUT)/build_fingerprint.txt)
+BUILD_FINGERPRINT_FILE := $(PRODUCT_OUT)/build_fingerprint.txt
+ifneq (,$(shell mkdir -p $(PRODUCT_OUT) && echo $(BUILD_FINGERPRINT) >$(BUILD_FINGERPRINT_FILE) && grep " " $(BUILD_FINGERPRINT_FILE)))
+  $(error BUILD_FINGERPRINT cannot contain spaces: "$(file <$(BUILD_FINGERPRINT_FILE))")
+endif
+BUILD_FINGERPRINT_FROM_FILE := $$(cat $(BUILD_FINGERPRINT_FILE))
+# unset it for safety.
+BUILD_FINGERPRINT :=
 
 # The string used to uniquely identify the system build; used by the OTA server.
 # This purposefully excludes any product-specific variables.
@@ -427,7 +432,7 @@ endif
 	        PLATFORM_VERSION_ALL_CODENAMES="$(PLATFORM_VERSION_ALL_CODENAMES)" \
 	        PLATFORM_MIN_SUPPORTED_TARGET_SDK_VERSION="$(PLATFORM_MIN_SUPPORTED_TARGET_SDK_VERSION)" \
 	        BUILD_VERSION_TAGS="$(BUILD_VERSION_TAGS)" \
-		$(if $(OEM_THUMBPRINT_PROPERTIES),BUILD_THUMBPRINT="$(BUILD_THUMBPRINT)") \
+		$(if $(OEM_THUMBPRINT_PROPERTIES),BUILD_THUMBPRINT="$(BUILD_THUMBPRIN_FROM_FILE)") \
 	        TARGET_CPU_ABI_LIST="$(TARGET_CPU_ABI_LIST)" \
 	        TARGET_CPU_ABI_LIST_32_BIT="$(TARGET_CPU_ABI_LIST_32_BIT)" \
 	        TARGET_CPU_ABI_LIST_64_BIT="$(TARGET_CPU_ABI_LIST_64_BIT)" \
@@ -1885,10 +1890,31 @@ define build-recoveryimage-target
   $(hide) mkdir -p $(TARGET_RECOVERY_ROOT_OUT)/sdcard $(TARGET_RECOVERY_ROOT_OUT)/tmp
   # Copying baseline ramdisk...
   # Use rsync because "cp -Rf" fails to overwrite broken symlinks on Mac.
-  $(hide) rsync -a --exclude=sdcard $(IGNORE_RECOVERY_SEPOLICY) $(IGNORE_CACHE_LINK) $(TARGET_ROOT_OUT) $(TARGET_RECOVERY_OUT)
-  # Modifying ramdisk contents...
-  $(if $(filter true,$(BOARD_BUILD_SYSTEM_ROOT_IMAGE)),, \
-    $(hide) ln -sf /system/bin/init $(TARGET_RECOVERY_ROOT_OUT)/init)
+  $(hide) rsync -a --exclude=etc --exclude=sdcard --exclude=vendor $(IGNORE_RECOVERY_SEPOLICY) $(IGNORE_CACHE_LINK) $(TARGET_ROOT_OUT) $(TARGET_RECOVERY_OUT)
+  # Copy adbd from system/bin to recovery/root/sbin
+  $(hide) cp -f $(TARGET_OUT_EXECUTABLES)/adbd $(TARGET_RECOVERY_ROOT_OUT)/sbin/adbd
+
+  	# Modifying ramdisk contents...
+	# Darth9 #
+ 	$(if $(filter 1,$(FOX_USE_TWRP_RECOVERY_IMAGE_BUILDER)), \
+  	$(hide) $(FOX_VENDOR) \
+  	FOX_VENDOR_CMD="Fox_Before_Recovery_Image" \
+  	TARGET_ARCH="$(TARGET_ARCH)" \
+	TARGET_RECOVERY_ROOT_OUT="$(TARGET_RECOVERY_ROOT_OUT)" \
+	MKBOOTIMG="$(MKBOOTIMG)" \
+	MKBOOTFS="$(MKBOOTFS)" \
+	INTERNAL_RECOVERYIMAGE_ARGS='"$(INTERNAL_RECOVERYIMAGE_ARGS)"' \
+	INTERNAL_MKBOOTIMG_VERSION_ARGS="$(INTERNAL_MKBOOTIMG_VERSION_ARGS)" \
+	BOARD_MKBOOTIMG_ARGS="$(BOARD_MKBOOTIMG_ARGS)" \
+	TARGET_OUT="$(TARGET_OUT)" \
+  	RECOVERY_RAMDISK_COMPRESSOR="$(RECOVERY_RAMDISK_COMPRESSOR)" \
+  	INSTALLED_RECOVERYIMAGE_TARGET="$(INSTALLED_RECOVERYIMAGE_TARGET)" \
+  	BOARD_BOOTIMAGE_PARTITION_SIZE=$(BOARD_BOOTIMAGE_PARTITION_SIZE) \
+  	BOARD_RECOVERYIMAGE_PARTITION_SIZE=$(BOARD_RECOVERYIMAGE_PARTITION_SIZE) \
+  	INTERNAL_KERNEL_CMDLINE="$(INTERNAL_KERNEL_CMDLINE)" \
+  	recovery_ramdisk="$(recovery_ramdisk)" \
+  	recovery_uncompressed_ramdisk="$(recovery_uncompressed_ramdisk)")
+
   $(if $(BOARD_RECOVERY_KERNEL_MODULES), \
     $(call build-image-kernel-modules,$(BOARD_RECOVERY_KERNEL_MODULES),$(TARGET_RECOVERY_ROOT_OUT),,$(call intermediates-dir-for,PACKAGING,depmod_recovery)))
   # Removes $(TARGET_RECOVERY_ROOT_OUT)/init*.rc EXCEPT init.recovery*.rc.
@@ -2020,7 +2046,17 @@ endif
 
 .PHONY: recoveryimage
 recoveryimage: $(INSTALLED_RECOVERYIMAGE_TARGET) $(RECOVERY_RESOURCE_ZIP)
-	bash $(FOX_VENDOR)
+ifeq ($(FOX_USE_TWRP_RECOVERY_IMAGE_BUILDER),1)
+	$(bash) $(FOX_VENDOR) FOX_VENDOR_CMD="Fox_After_Recovery_Image" \
+	INSTALLED_RECOVERYIMAGE_TARGET="$(INSTALLED_RECOVERYIMAGE_TARGET)" \
+	TARGET_ARCH="$(TARGET_ARCH)" \
+	TARGET_RECOVERY_ROOT_OUT="$(TARGET_RECOVERY_ROOT_OUT)" \
+	MKBOOTIMG="$(MKBOOTIMG)" \
+	MKBOOTFS="$(MKBOOTFS)"
+else
+	$(bash) $(FOX_VENDOR)
+endif
+# Darth9 # FOX_USE_TWRP_RECOVERY_IMAGE_BUILDER
 
 ifneq ($(BOARD_NAND_PAGE_SIZE),)
 $(error MTD device is no longer supported and thus BOARD_NAND_PAGE_SIZE is deprecated.)
