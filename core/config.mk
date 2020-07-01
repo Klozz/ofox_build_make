@@ -652,6 +652,8 @@ endif
 .KATI_READONLY := \
     PRODUCT_COMPATIBLE_PROPERTY
 
+FOX_CURRENT_DEV_STR:=$(shell git -C bootable/recovery log -1 --format='%ad (%h)' --date=short)
+
 #OrangeFox post script
 FOX_VENDOR:=vendor/recovery/OrangeFox.sh
 
